@@ -1,0 +1,614 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>drivers: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/duxweb/go-lock/drivers/memory.go (100.0%)</option>
+				
+				<option value="file1">github.com/duxweb/go-lock/drivers/redis.go (97.4%)</option>
+				
+				<option value="file2">github.com/duxweb/go-lock/examples/memory/main.go (0.0%)</option>
+				
+				<option value="file3">github.com/duxweb/go-lock/examples/redis/main.go (0.0%)</option>
+				
+				<option value="file4">github.com/duxweb/go-lock/main.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package drivers
+
+import (
+        "sync"
+        "time"
+
+        "github.com/duxweb/go-lock"
+)
+
+// MemoryProvider 内存锁驱动
+// MemoryProvider memory lock driver
+type MemoryProvider struct {
+        locks sync.Map
+}
+
+// NewMemoryDriver 创建内存锁驱动
+// NewMemoryDriver creates a memory lock driver
+func NewMemoryDriver() *MemoryProvider <span class="cov8" title="1">{
+        return &amp;MemoryProvider{
+                locks: sync.Map{},
+        }
+}</span>
+
+// Create 创建一个内存锁
+// Create creates a memory lock
+func (r *MemoryProvider) Create(key string, ttl time.Duration) lock.LockDriver <span class="cov8" title="1">{
+        return &amp;MemoryLockDriver{
+                provider: r,
+                key:      key,
+                ttl:      ttl,
+        }
+}</span>
+
+// MemoryLockDriver 内存锁驱动实例
+// MemoryLockDriver memory lock driver instance
+type MemoryLockDriver struct {
+        provider *MemoryProvider
+        key      string
+        ttl      time.Duration
+}
+
+// memLock 内存锁数据结构
+// memLock memory lock data structure
+type memLock struct {
+        mutex   sync.Mutex
+        locked  bool
+        timeout time.Time
+}
+
+// Acquire 尝试获取一个锁
+// Acquire attempts to acquire a lock
+func (r *MemoryLockDriver) Acquire(wait bool) bool <span class="cov8" title="1">{
+        for </span><span class="cov8" title="1">{
+
+                actual, _ := r.provider.locks.LoadOrStore(r.key, &amp;memLock{})
+                lock := actual.(*memLock)
+
+                lock.mutex.Lock()
+                now := time.Now()
+                if !lock.locked || now.After(lock.timeout) </span><span class="cov8" title="1">{
+                        lock.locked = true
+                        lock.timeout = now.Add(r.ttl)
+                        lock.mutex.Unlock()
+                        return true
+                }</span>
+                <span class="cov8" title="1">lock.mutex.Unlock()
+
+                if !wait </span><span class="cov8" title="1">{
+                        return false
+                }</span>
+                <span class="cov8" title="1">time.Sleep(100 * time.Millisecond)</span>
+        }
+}
+
+// Release 释放一个锁
+// Release releases a lock
+func (r *MemoryLockDriver) Release() error <span class="cov8" title="1">{
+        actual, ok := r.provider.locks.Load(r.key)
+        if !ok </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+        <span class="cov8" title="1">lock := actual.(*memLock)
+        lock.mutex.Lock()
+        defer lock.mutex.Unlock()
+        if !lock.locked </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+        <span class="cov8" title="1">lock.locked = false
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package drivers
+
+import (
+        "context"
+        "fmt"
+        "math/rand"
+        "sync"
+        "time"
+
+        "github.com/google/uuid"
+        "github.com/redis/go-redis/v9"
+
+        "github.com/duxweb/go-lock"
+)
+
+// RedisProvider Redis锁驱动提供者
+// RedisProvider Redis lock provider
+type RedisProvider struct {
+        client *redis.Client
+        prefix string
+}
+
+// RedisOptions Redis锁配置选项
+// RedisOptions Redis lock configuration options
+type RedisOptions struct {
+        Client       *redis.Client
+        Addr         string
+        Password     string
+        DB           int
+        Prefix       string
+        PoolSize     int
+        MinIdleConns int
+}
+
+// NewRedisDriver 创建Redis锁驱动
+// NewRedisDriver creates a Redis lock driver
+func NewRedisDriver(opts *RedisOptions) (*RedisProvider, error) <span class="cov8" title="1">{
+        var client *redis.Client
+
+        ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+        defer cancel()
+
+        if opts.Client != nil </span><span class="cov8" title="1">{
+                client = opts.Client
+        }</span> else<span class="cov8" title="1"> {
+                client = redis.NewClient(&amp;redis.Options{
+                        Addr:         opts.Addr,
+                        Password:     opts.Password,
+                        DB:           opts.DB,
+                        PoolSize:     opts.PoolSize,
+                        MinIdleConns: opts.MinIdleConns,
+                })
+        }</span>
+
+        <span class="cov8" title="1">if err := client.Ping(ctx).Err(); err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("Redis: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return &amp;RedisProvider{
+                client: client,
+                prefix: opts.Prefix,
+        }, nil</span>
+}
+
+// Create 创建一个Redis锁
+// Create creates a Redis lock
+func (r *RedisProvider) Create(key string, ttl time.Duration) lock.LockDriver <span class="cov8" title="1">{
+        return &amp;RedisLockDriver{
+                key:        key,
+                ttl:        ttl,
+                client:     r.client,
+                prefix:     r.prefix,
+                lockValues: &amp;sync.Map{},
+        }
+}</span>
+
+// RedisLockDriver Redis锁驱动实例
+// RedisLockDriver Redis lock driver instance
+type RedisLockDriver struct {
+        key        string
+        ttl        time.Duration
+        client     *redis.Client
+        lockValues *sync.Map
+        prefix     string
+}
+
+// getKey 获取带前缀的键名
+// getKey gets the key with prefix
+func (r *RedisLockDriver) getKey(key string) string <span class="cov8" title="1">{
+        if r.prefix == "" </span><span class="cov8" title="1">{
+                return key
+        }</span>
+        <span class="cov8" title="1">return r.prefix + ":" + key</span>
+}
+
+// Acquire 尝试获取一个锁
+// Acquire attempts to acquire a lock
+func (r *RedisLockDriver) Acquire(wait bool) bool <span class="cov8" title="1">{
+        lockValue := uuid.New().String()
+        redisKey := r.getKey(r.key)
+        deadline := time.Now().Add(30 * time.Second)
+
+        for </span><span class="cov8" title="1">{
+                ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+                cmd := r.client.SetNX(ctx, redisKey, lockValue, r.ttl)
+                err := cmd.Err()
+                cancel()
+
+                if err == nil &amp;&amp; cmd.Val() </span><span class="cov8" title="1">{
+                        r.lockValues.Store(redisKey, lockValue)
+                        return true
+                }</span>
+
+                <span class="cov8" title="1">if !wait || time.Now().After(deadline) </span><span class="cov8" title="1">{
+                        return false
+                }</span>
+
+                <span class="cov8" title="1">time.Sleep(time.Duration(50+rand.Intn(100)) * time.Millisecond)</span>
+        }
+}
+
+// Release 释放一个锁
+// Release releases a lock
+func (r *RedisLockDriver) Release() error <span class="cov8" title="1">{
+        redisKey := r.getKey(r.key)
+
+        lockValue, ok := r.lockValues.Load(redisKey)
+        if !ok </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">defer r.lockValues.Delete(redisKey)
+
+        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+        defer cancel()
+
+        script := `
+        if redis.call("GET", KEYS[1]) == ARGV[1] then
+                return redis.call("DEL", KEYS[1])
+        else
+                return 0
+        end
+        `
+
+        _, err := r.client.Eval(ctx, script, []string{redisKey}, lockValue).Result()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package main
+
+import (
+        "fmt"
+        "time"
+
+        "github.com/duxweb/go-lock"
+        "github.com/duxweb/go-lock/drivers"
+)
+
+func main() <span class="cov0" title="0">{
+        // 创建内存锁驱动
+        driver := drivers.NewMemoryDriver()
+
+        // 创建锁管理器
+        manager := lock.New(driver)
+
+        // 演示基本锁功能
+        fmt.Println("===== 基本锁功能演示 =====")
+        demonstrateBasicLocking(manager)
+
+        // 演示并发锁竞争
+        fmt.Println("\n===== 并发锁竞争演示 =====")
+        demonstrateConcurrentLocking(manager)
+}</span>
+
+func demonstrateBasicLocking(manager *lock.Manager) <span class="cov0" title="0">{
+        lockKey := "my-resource"
+        ttl := time.Second * 5
+
+        // 创建锁
+        lock1 := manager.Create(lockKey, ttl)
+
+        // 尝试获取锁
+        fmt.Println("尝试获取锁...")
+        if lock1.Acquire(false) </span><span class="cov0" title="0">{
+                fmt.Println("成功获取锁！")
+                defer func() </span><span class="cov0" title="0">{
+                        if err := lock1.Release(); err != nil </span><span class="cov0" title="0">{
+                                fmt.Printf("释放锁失败: %v\n", err)
+                                return
+                        }</span>
+                        <span class="cov0" title="0">fmt.Println("锁已释放")</span>
+                }()
+
+                // 模拟执行受保护的操作
+                <span class="cov0" title="0">fmt.Println("执行受保护的操作...")
+                time.Sleep(time.Second * 2)
+
+                // 创建另一个锁实例，尝试同时获取锁
+                fmt.Println("创建第二个锁实例...")
+                lock2 := manager.Create(lockKey, ttl)
+
+                fmt.Println("第二个锁实例尝试获取锁...")
+                if lock2.Acquire(false) </span><span class="cov0" title="0">{
+                        fmt.Println("第二个锁实例获取锁成功 - 这不应该发生！")
+                }</span> else<span class="cov0" title="0"> {
+                        fmt.Println("第二个锁实例获取锁失败，锁已被占用")
+                }</span>
+        } else<span class="cov0" title="0"> {
+                fmt.Println("无法获取锁")
+        }</span>
+}
+
+func demonstrateConcurrentLocking(manager *lock.Manager) <span class="cov0" title="0">{
+        lockKey := "shared-resource"
+        ttl := time.Second * 3
+
+        // 创建并启动多个 worker，它们会尝试获取同一把锁
+        for i := 1; i &lt;= 3; i++ </span><span class="cov0" title="0">{
+                workerID := i
+                go func() </span><span class="cov0" title="0">{
+                        lock := manager.Create(lockKey, ttl)
+                        fmt.Printf("工作线程 %d 尝试获取锁...\n", workerID)
+
+                        // 尝试获取锁，如果获取不到会等待
+                        if lock.Acquire(true) </span><span class="cov0" title="0">{
+                                fmt.Printf("工作线程 %d 成功获取锁\n", workerID)
+
+                                // 模拟处理工作
+                                fmt.Printf("工作线程 %d 正在执行工作...\n", workerID)
+                                time.Sleep(time.Second)
+
+                                // 完成后释放锁
+                                if err := lock.Release(); err != nil </span><span class="cov0" title="0">{
+                                        fmt.Printf("工作线程 %d 释放锁失败: %v\n", workerID, err)
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">fmt.Printf("工作线程 %d 完成工作并释放锁\n", workerID)</span>
+                        } else<span class="cov0" title="0"> {
+                                fmt.Printf("工作线程 %d 无法获取锁\n", workerID)
+                        }</span>
+                }()
+        }
+
+        // 等待所有 worker 完成
+        <span class="cov0" title="0">time.Sleep(time.Second * 10)</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package main
+
+import (
+        "fmt"
+        "os"
+        "time"
+
+        "github.com/duxweb/go-lock"
+        "github.com/duxweb/go-lock/drivers"
+)
+
+func main() <span class="cov0" title="0">{
+        // 默认使用 localhost:6379
+        redisAddr := "localhost:6379"
+        redisPassword := ""
+
+        // 允许通过环境变量覆盖
+        if envAddr := os.Getenv("REDIS_ADDR"); envAddr != "" </span><span class="cov0" title="0">{
+                redisAddr = envAddr
+        }</span>
+        <span class="cov0" title="0">if envPass := os.Getenv("REDIS_PASSWORD"); envPass != "" </span><span class="cov0" title="0">{
+                redisPassword = envPass
+        }</span>
+
+        // 创建Redis锁驱动
+        <span class="cov0" title="0">driver, err := drivers.NewRedisDriver(&amp;drivers.RedisOptions{
+                Addr:     redisAddr,
+                Password: redisPassword,
+                DB:       0,
+                Prefix:   "example-lock:",
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                fmt.Printf("创建Redis锁驱动失败: %v\n", err)
+                return
+        }</span>
+
+        // 创建锁管理器
+        <span class="cov0" title="0">manager := lock.New(driver)
+
+        // 演示基本锁功能
+        fmt.Println("===== 基本锁功能演示 =====")
+        demonstrateBasicLocking(manager)
+
+        // 演示分布式锁（在多个进程间运行此例子可以看到效果）
+        fmt.Println("\n===== 分布式锁演示 =====")
+        demonstrateDistributedLocking(manager)</span>
+}
+
+func demonstrateBasicLocking(manager *lock.Manager) <span class="cov0" title="0">{
+        lockKey := "my-resource"
+        ttl := time.Second * 10
+
+        // 创建锁
+        lock1 := manager.Create(lockKey, ttl)
+
+        // 尝试获取锁
+        fmt.Println("尝试获取锁...")
+        if lock1.Acquire(false) </span><span class="cov0" title="0">{
+                fmt.Println("成功获取锁！")
+                defer func() </span><span class="cov0" title="0">{
+                        if err := lock1.Release(); err != nil </span><span class="cov0" title="0">{
+                                fmt.Printf("释放锁失败: %v\n", err)
+                                return
+                        }</span>
+                        <span class="cov0" title="0">fmt.Println("锁已释放")</span>
+                }()
+
+                // 模拟执行受保护的操作
+                <span class="cov0" title="0">fmt.Println("执行受保护的操作...")
+                time.Sleep(time.Second * 2)
+
+                // 创建另一个锁实例，尝试同时获取锁
+                fmt.Println("创建第二个锁实例...")
+                lock2 := manager.Create(lockKey, ttl)
+
+                fmt.Println("第二个锁实例尝试获取锁...")
+                if lock2.Acquire(false) </span><span class="cov0" title="0">{
+                        fmt.Println("第二个锁实例获取锁成功 - 这不应该发生！")
+                }</span> else<span class="cov0" title="0"> {
+                        fmt.Println("第二个锁实例获取锁失败，锁已被占用")
+                }</span>
+        } else<span class="cov0" title="0"> {
+                fmt.Println("无法获取锁")
+        }</span>
+}
+
+func demonstrateDistributedLocking(manager *lock.Manager) <span class="cov0" title="0">{
+        lockKey := "distributed-resource"
+        ttl := time.Second * 30
+
+        // 创建锁
+        lock := manager.Create(lockKey, ttl)
+
+        // 尝试获取锁
+        fmt.Println("尝试获取分布式锁...")
+        if lock.Acquire(false) </span><span class="cov0" title="0">{
+                fmt.Println("成功获取分布式锁！")
+                fmt.Printf("锁 '%s' 已被此进程持有，PID: %d\n", lockKey, os.Getpid())
+
+                fmt.Println("模拟长时间运行的任务...")
+                fmt.Println("您可以在另一个终端窗口运行相同的示例，它将无法获取锁")
+                fmt.Println("按Ctrl+C终止此进程来释放锁")
+
+                // 保持锁持有状态，直到用户中断程序
+                for </span><span class="cov0" title="0">{
+                        time.Sleep(time.Second * 5)
+                        fmt.Printf("进程 %d 仍然持有锁 '%s'...\n", os.Getpid(), lockKey)
+                }</span>
+        } else<span class="cov0" title="0"> {
+                fmt.Println("无法获取分布式锁，可能被其他进程持有")
+                fmt.Println("尝试等待获取锁...")
+
+                // 尝试等待获取锁
+                if lock.Acquire(true) </span><span class="cov0" title="0">{
+                        fmt.Println("成功等待并获取分布式锁！")
+                        fmt.Printf("锁 '%s' 现在被此进程持有，PID: %d\n", lockKey, os.Getpid())
+
+                        // 持有锁5秒
+                        time.Sleep(time.Second * 5)
+
+                        // 释放锁
+                        if err := lock.Release(); err != nil </span><span class="cov0" title="0">{
+                                fmt.Printf("释放锁失败: %v\n", err)
+                                return
+                        }</span>
+                        <span class="cov0" title="0">fmt.Println("锁已释放")</span>
+                } else<span class="cov0" title="0"> {
+                        fmt.Println("等待获取锁失败")
+                }</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package lock
+
+import (
+        "time"
+)
+
+// Manager 锁管理器
+// Manager lock manager
+type Manager struct {
+        driver LockProvider
+}
+
+// New 创建一个锁管理器
+// New creates a lock manager.
+func New(driver LockProvider) *Manager <span class="cov8" title="1">{
+        return &amp;Manager{
+                driver: driver,
+        }
+}</span>
+
+// Create 创建一个锁
+// Create creates a lock.
+func (m *Manager) Create(key string, ttl time.Duration) LockDriver <span class="cov8" title="1">{
+        return m.driver.Create(key, ttl)
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
